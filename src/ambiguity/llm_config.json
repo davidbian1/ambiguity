@@ -1,0 +1,8 @@
+{
+  "generate_interpretations": {"model": "gpt-4o-mini", "temperature": 0.9, "max_tokens": 2000},
+  "summarize_v1v2": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 500},
+  "integrate_choice": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 1500},
+  "extract_axes": {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 800},
+  "generate_axis_particle": {"model": "gpt-4o-mini", "temperature": 0.9, "max_tokens": 200},
+  "score_consistency": {"model": "gpt-4o-mini", "temperature": 0.0, "max_tokens": 100}
+}

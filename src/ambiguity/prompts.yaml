@@ -1,0 +1,152 @@
+system: |
+  You are helping run an iterative clarification loop for a vague project idea.
+
+  In sequence, each round you'll be asked to:
+  1. Generate distinct interpretations of the current spec
+  2. Summarize the two most divergent interpretations
+  3. Rewrite the spec to incorporate a human's decision
+
+  Earlier turns in this conversation are earlier rounds of the same loop —
+  use them as context, don't re-litigate decisions already made.
+
+generate_interpretations: |
+  Generate exactly {n_interpretations} distinct but plausible interpretations
+  of how this project idea/spec could be built:
+
+  {spec}
+
+  Prioritize interpretations that diverge along the most foundational,
+  high-consequence dimensions still left genuinely open by the spec above —
+  the kind of decision that would reshape most of what comes after it (e.g.
+  target platform, core architecture, primary audience, fundamental scope).
+  Only diverge on surface-level details (styling, minor feature choices) if
+  no foundational dimension remains open — don't re-litigate something the
+  spec above has already effectively settled.
+
+  Return a JSON array of {n_interpretations} strings, each a short concrete
+  description of one interpretation.
+
+# Particles-only redesign (ticket 004) — active alongside the PCA-based
+# prompts above, not replacing them yet, per the explicit test-first gate:
+# only build expand_axes/checkpoint UI/amendments if this slice actually
+# beats the cheap generate_interpretations fix on the chess-engine case.
+
+extract_axes: |
+  Given this project request:
+
+  {seed_text}
+
+  List only the design decisions this request cannot be built without
+  making — not decisions that are merely compatible with, or unlocked by,
+  some hypothetical future answer (e.g. do not list push notifications
+  just because a mobile platform is possible). For each, give a short
+  axis name and classify it "decision" (changes behavior/scope) or
+  "detail" (implementation choice, never surfaced as a question).
+
+  Return a JSON array of objects, each with two fields: "axis" (short
+  name) and "class" ("decision" or "detail"). An empty or short list is a
+  normal, correct outcome for a vague request.
+
+generate_axis_particle: |
+  Project request: {seed_text}
+
+  Propose one plausible value for just this axis: "{axis_name}"
+
+  Do not fill in, imply, or assume a value for any other axis. This is
+  deliberate: a fully imagined spec would silently decide things nobody
+  has asked about yet (this is what caused platform to get locked into
+  round-1 wording in the old design).
+
+  Return JSON with two fields: "axis" (repeat the axis name back) and
+  "value" (your proposed value, a short phrase).
+
+summarize_v1v2: |
+  Current spec:
+  {spec}
+
+  Two divergent interpretations of it:
+  A: {v1_text}
+  B: {v2_text}
+
+  Return JSON with three fields:
+  - "v1_summary": 2-sentence concrete description of A
+  - "v2_summary": 2-sentence concrete description of B
+  - "ambiguity_topic": a short name for this design decision
+
+integrate_choice: |
+  Current spec:
+  {spec}
+
+  Decisions already made in prior rounds (do not re-litigate these):
+  {prior_block}
+
+  New decision on "{ambiguity_topic}":
+  {decision_context}
+
+  Rewrite the spec to naturally incorporate this new decision — weave it
+  into the prose, don't just append a note.
+
+  Return JSON with two fields:
+  - "rewritten_spec": the full rewritten spec text
+  - "decision_sentence": a single short sentence capturing just this round's
+    decision, suitable for reuse as a prior-decisions checklist item in
+    future rounds
+
+decision_context:
+  v1: 'The human chose approach A: "{v1_summary}"'
+  v2: 'The human chose approach B: "{v2_summary}"'
+  tolerate: |
+    The human wants to leave "{ambiguity_topic}" open rather than commit to
+    either option.
+
+    Option A: "{v1_summary}"
+    Option B: "{v2_summary}"
+
+    Phrase this however reads most naturally for this specific topic — e.g.
+    marking the topic as not a concern if that fits, or noting both options
+    remain acceptable if that fits better. Use your judgment.
+  custom: 'The human gave their own answer: "{custom_text}"'
+
+# score_consistency is FALLBACK PATH ONLY — only called when the human's
+# answer doesn't exact-match an existing value for the axis. A clean
+# "1"/"mobile"/etc. match is handled by deterministic code (weight 1 or
+# ~0, see particles.py), no model call.
+score_consistency: |
+  Axis: "{axis_name}"
+  Existing candidate value for this particle: "{particle_value}"
+  Human's answer: "{human_answer}"
+
+  Does the human's answer support keeping this particle's value, or does
+  it contradict it? The answer may be hedged or free-text ("probably
+  mobile", "either is fine but leaning web") — judge fit, don't demand an
+  exact match.
+
+  Return JSON with one field: "weight", a number from 0.0 (contradicts)
+  to 1.0 (fully supports).
+
+# =============================================================================
+# NOT YET BUILT (ticket 004's stop-gate: only build this if the
+# particles-only slice above demonstrably beats the cheap fix).
+#
+# expand_axes:  # replaces nothing directly — this machinery didn't exist
+#               # before. Runs once after EVERY confirmed axis. Wording here
+#               # is deliberately strict, per ticket 004's own warning that
+#               # this is "the part most likely to be implemented too
+#               # loosely."
+#   |
+#   Just confirmed: "{axis_name}" = "{confirmed_value}"
+#   Already-decided axes: {ledger_summary}
+#   Original request: {seed_text}
+#
+#   Does this confirmation make any NEW axis strictly UNAVOIDABLE — meaning
+#   the software would be unbuildable, or would silently behave differently
+#   than requested, without also deciding it? Do NOT list something merely
+#   because it's now compatible, relevant, or natural to consider (example:
+#   confirming a mobile platform does NOT make push_notifications
+#   unavoidable — nothing about "build a chess app" implied notifications;
+#   mobile just makes them possible). An empty list is the common, correct
+#   answer most rounds — do not invent a candidate just to produce output.
+#
+#   Return JSON: a list of {"axis": ..., "class": "decision"|"detail"}
+#   (same shape as extract_axes) — empty list if nothing is unavoidable.
+# =============================================================================
