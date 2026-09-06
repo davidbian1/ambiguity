@@ -1,6 +1,6 @@
 # Wayfinder Graph — Design Spec
 
-Status: draft, validated with the throwaway prototype code in this package (`schema.py`, `storage.py`, `state.py`, `resolvers.py`, `graph.py`, `metrics.py`, `prototype_run.py`). Not a shipped implementation — see `docs/adr/0001-wayfinder-graph-standalone.md` for the standalone-architecture decision and the tracked map ([Wayfinder Graph](https://github.com/davidbian1/ambiguity/issues/1)) for the full decision history this spec compiles. Vocabulary is defined in `CONTEXT.md`; this document assumes it.
+Status: validated with throwaway prototype code, both a fake-resolver version (`schema.py`, `storage.py`, `state.py`, `resolvers.py`, `graph.py`, `metrics.py`, `prototype_run.py`) and a real, live-tested one against the actual Claude Agent SDK (`agent_tools.py`, `agent_resolvers.py`, `real_run.py`) — `uv run python -m wayfinder_graph.real_run` runs a real research ticket and a real HITL grilling ticket (including a genuine pause-and-resume cycle) to completion against live Claude. Still not a shipped, maintained implementation — see `docs/adr/0001-wayfinder-graph-standalone.md` for the standalone-architecture decision and the tracked map ([Wayfinder Graph](https://github.com/davidbian1/ambiguity/issues/1)) for the full decision history this spec compiles. Vocabulary is defined in `CONTEXT.md`; this document assumes it.
 
 ## What this is
 
@@ -44,11 +44,21 @@ def resolve_ticket_node(state):
     return {"resolution_text": action.text, "resolver_state": None, "human_answer": None}
 ```
 
-`action.state` — the Resolver's Agent SDK `session_id` plus whatever's needed to resume it (e.g. the pending `tool_use_id`) — is recomputed identically on replay and only becomes part of the checkpoint via the node's return value *after* `interrupt()` resolves, matching this repo's established pattern (`nodes.py::ask_human_node`) rather than inventing a new one. Nothing about the pause depends on the Agent SDK's own session storage surviving the gap.
+`action.state` — the Resolver's Agent SDK `session_id` plus the pending `tool_use_id` — is recomputed identically on replay and only becomes part of the checkpoint via the node's return value *after* `interrupt()` resolves, matching this repo's established pattern (`nodes.py::ask_human_node`) rather than inventing a new one. Nothing about the pause depends on the Agent SDK's own session storage surviving the gap.
+
+**The actual mechanism, verified live** (see `agent_tools.py`, `agent_resolvers.py`) — simpler than the research ticket's original guess, which assumed a synthetic `tool_result` message had to be injected on resume:
+
+1. `ask_human` is a custom in-process MCP tool. A `PreToolUse` hook returns `{"permissionDecision": "defer"}` for it, which stops the run; the final `ResultMessage.deferred_tool_use` carries `(id, name, input)` — `id` is the pending `tool_use_id`, `input` is the question payload.
+2. To resume: rebuild `ClaudeAgentOptions(resume=session_id)` and call `query(prompt="", options=...)` — **no synthetic message needed**. The SDK automatically replays the deferred `ask_human` call against this round's freshly-built tools.
+3. This round's `ask_human` handler is built differently than the first: instead of never running (deferred), it now returns the human's answer directly as the tool's result — the closure carries the answer in.
+4. The `PreToolUse` hook is rebuilt too: it lets through only the one `tool_use_id` being answered (so the replayed call reaches the handler above) and still defers any *other* `ask_human` call the resolver might make this round (a genuine follow-up question), so a resolver can take several HITL rounds, not just one.
+5. `submit_resolution` is a second, never-deferred MCP tool — the resolver's only way to signal it's done. Models will happily end a turn in plain text instead of calling it unless the system prompt says, explicitly, that a plain-text reply does not count as finishing.
+
+One naming gotcha that cost real debugging time: in-process MCP tools are exposed to the model as `mcp__<server-name>__<tool-name>`, not their bare registered name — `allowed_tools` and hook matching both have to use the qualified name (`mcp_tool_name()` in `agent_tools.py`), or the SDK silently denies the call as unauthorized.
 
 ### Resolvers and tool loadout
 
-One `TicketResolver` per ticket type, each independently swappable (see **Swap points**). Decided in [ticket #3](https://github.com/davidbian1/ambiguity/issues/3):
+One `TicketResolver` per ticket type, each independently swappable (see **Swap points**). Decided in [ticket #3](https://github.com/davidbian1/ambiguity/issues/3), and — for Research and Grilling — now implemented for real against the Claude Agent SDK in `agent_resolvers.py` (`resolvers.py`'s fakes remain for cheap, offline testing of the graph shape; `agent_resolvers.py`'s versions are the ones that make live API calls). Prototype and Task aren't implemented yet — same tool-loadout table, no resolver code written against it.
 
 | Resolver | Tools | Notes |
 |---|---|---|
